@@ -269,23 +269,64 @@ def apply_filters_to_dataframe(df, filters):
     return filtered_df
 
 def validate_required_columns(df):
-    """Validate that the uploaded CSV contains required columns"""
-    required_columns = ['Date', 'Amount', 'Category']
+    """Validate that the uploaded CSV contains required columns with flexible matching"""
+    # Define flexible mappings for different column name variations
+    column_mappings = {
+        'date': ['date', 'Date', 'DATE', 'transaction_date', 'transaction date', 'trans_date', 'time', 'Time'],
+        'amount': ['amount', 'Amount', 'AMOUNT', 'value', 'Value', 'price', 'Price', 'sum', 'Sum', 'total', 'Total'],
+        'category': ['category', 'Category', 'CATEGORY', 'type', 'Type', 'expense_type', 'expense type', 'class', 'Class']
+    }
+    
+    found_columns = {}
     missing_columns = []
     
-    for col in required_columns:
-        if col not in df.columns:
-            missing_columns.append(col)
+    # Check each required column
+    for required_col, variations in column_mappings.items():
+        found = False
+        for variation in variations:
+            if variation in df.columns:
+                found_columns[required_col] = variation
+                found = True
+                break
+        
+        if not found:
+            missing_columns.append(required_col)
     
-    return missing_columns
+    return missing_columns, found_columns
 
 def show_csv_upload_section(db):
     """Show CSV upload section"""
     st.subheader("📁 Upload CSV File")
+    
+    # Show format guidance
+    with st.expander("📋 **CSV Format Guide** - Click to see expected format"):
+        st.markdown("""
+        ### ✅ Accepted Column Names (case-insensitive):
+        
+        **📅 Date Column:** `date`, `Date`, `transaction_date`, `time`  
+        **💰 Amount Column:** `amount`, `Amount`, `value`, `price`, `total`  
+        **🏷️ Category Column:** `category`, `Category`, `type`, `expense_type`  
+        **📝 Description Column:** `description`, `desc`, `details`, `memo`, `note` *(optional)*
+        
+        ### 📄 Sample CSV Format:
+        ```csv
+        date,amount,category,description
+        2024-01-15,-45.67,Groceries,Whole Foods Market
+        2024-01-16,-12.50,Transportation,Metro Card
+        2024-01-20,2500.00,Income,Salary Deposit
+        ```
+        
+        ### 💡 Tips:
+        - **Expenses**: Use negative amounts (e.g., `-45.67`)
+        - **Income**: Use positive amounts (e.g., `2500.00`)
+        - **Dates**: Any common format works (YYYY-MM-DD, MM/DD/YYYY, etc.)
+        - **Categories**: Any text (Groceries, Food, Entertainment, etc.)
+        """)
+    
     uploaded_file = st.file_uploader(
         "Choose a CSV file containing your transaction data",
         type=['csv'],
-        help="Upload your transaction data in CSV format. Expected columns: Date, Amount, Category"
+        help="Upload your transaction data in CSV format. The system will automatically detect and map your column names."
     )
     
     if uploaded_file is not None:
@@ -295,38 +336,68 @@ def show_csv_upload_section(db):
             
             st.success(f"✅ File uploaded successfully! Loaded {len(df)} records.")
             
-            # Validate required columns
-            missing_columns = validate_required_columns(df)
+            # Show column detection info
+            st.info(f"📋 **Detected columns:** {', '.join(df.columns.tolist())}")
+            
+            # Validate required columns with flexible matching
+            missing_columns, found_columns = validate_required_columns(df)
             
             if missing_columns:
                 st.markdown(f"""
                 <div class="error-box">
                     <h4>⚠️ Missing Required Columns</h4>
-                    <p>The following required columns are missing from your CSV:</p>
+                    <p>The following required columns could not be found in your CSV:</p>
                     <ul>
                         {''.join([f'<li><strong>{col}</strong></li>' for col in missing_columns])}
                     </ul>
-                    <p>Please ensure your CSV contains columns: <strong>Date</strong>, <strong>Amount</strong>, and <strong>Category</strong></p>
+                    <p><strong>Found columns:</strong> {', '.join(found_columns.values()) if found_columns else 'None'}</p>
+                    <p>Please ensure your CSV contains columns for: <strong>date</strong>, <strong>amount</strong>, and <strong>category</strong></p>
+                    <p><em>Tip: Column names are case-insensitive and can have variations like 'Date', 'date', 'Amount', 'value', etc.</em></p>
                 </div>
                 """, unsafe_allow_html=True)
                 return
             
-            # Show preview
-            st.subheader("👁️ Data Preview")
-            st.dataframe(df.head(10), use_container_width=True)
+            # Map columns to standard names
+            df_mapped = df.copy()
             
-            # Import to database
+            # Rename columns to standard names
+            for standard_name, actual_name in found_columns.items():
+                if actual_name != standard_name.title():
+                    df_mapped = df_mapped.rename(columns={actual_name: standard_name.title()})
+            
+            # Add Description column if missing
+            if 'Description' not in df_mapped.columns and 'description' not in df_mapped.columns:
+                # Check for common description column variations
+                desc_variations = ['desc', 'Desc', 'details', 'Details', 'memo', 'Memo', 'note', 'Note', 'narration', 'Narration']
+                desc_found = False
+                for desc_var in desc_variations:
+                    if desc_var in df.columns:
+                        df_mapped = df_mapped.rename(columns={desc_var: 'Description'})
+                        desc_found = True
+                        break
+                
+                if not desc_found:
+                    df_mapped['Description'] = ''
+            
+            st.success(f"✅ **Column mapping successful!**")
+            col_info = []
+            for standard, actual in found_columns.items():
+                col_info.append(f"**{standard.title()}** ← {actual}")
+            st.markdown("📋 **Mapped columns:** " + " | ".join(col_info))
+            
+            # Show preview
+            st.subheader("👁️ Data Preview (After Column Mapping)")
+            preview_df = df_mapped.head(10)
+            st.dataframe(preview_df, use_container_width=True)              # Import to database
             col1, col2 = st.columns([3, 1])
             with col2:
                 if st.button("💾 Import to Database", type="primary"):
                     try:
-                        # Standardize column names
-                        df_import = df.copy()
-                        df_import.columns = df_import.columns.str.title()
+                        # Use the mapped dataframe for import
+                        df_import = df_mapped.copy()
                         
-                        # Ensure required columns exist
-                        if 'Description' not in df_import.columns:
-                            df_import['Description'] = ''
+                        # Convert column names to lowercase for database import
+                        df_import.columns = df_import.columns.str.lower()
                         
                         # Import to database
                         imported_count = db.import_from_dataframe(df_import)

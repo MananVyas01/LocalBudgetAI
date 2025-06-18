@@ -45,13 +45,15 @@ def query_expense_ai(query: str, context: str, model_choice: str = 'mistral') ->
     - End with a practical tip or insight
     
     Remember: All data is private and local to the user."""
-    
-    # Primary model attempt
+      # Primary model attempt
     try:
         logger.info(f"Attempting to query {model_choice} model")
         
+        # Get the full model name for Ollama
+        full_model_name = get_full_model_name(model_choice)
+        
         response = ollama.chat(
-            model=model_choice,
+            model=full_model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Expense Data Summary:\n{context}\n\nUser Question: {query}"}
@@ -71,8 +73,11 @@ def query_expense_ai(query: str, context: str, model_choice: str = 'mistral') ->
         try:
             logger.info(f"Attempting fallback to {fallback_model} model")
             
+            # Get the full model name for fallback
+            full_fallback_name = get_full_model_name(fallback_model)
+            
             response = ollama.chat(
-                model=fallback_model,
+                model=full_fallback_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Expense Data Summary:\n{context}\n\nUser Question: {query}"}
@@ -184,12 +189,17 @@ def get_available_models() -> list:
     Get list of available Ollama models.
     
     Returns:
-        list: Available model names
+        list: Available model names (without tags)
     """
     try:
         import ollama
         models = ollama.list()
-        return [model['name'] for model in models.get('models', [])]
+        model_names = []
+        for model in models.models:
+            # Strip version tags (e.g., ":latest") to get base model name
+            base_name = model.model.split(':')[0]
+            model_names.append(base_name)
+        return model_names
     except Exception as e:
         logger.warning(f"Could not get available models: {e}")
         return ['mistral', 'llama3']  # Default options
@@ -201,23 +211,70 @@ def check_ollama_status() -> Tuple[bool, str]:
     Returns:
         Tuple[bool, str]: (is_available, status_message)
     """
+    import time
+    logger.info(f"Checking Ollama status at {time.time()}")
+    
     try:
         import ollama
+        logger.info("✅ Ollama package imported successfully")
         models = ollama.list()
-        available_models = [model['name'] for model in models.get('models', [])]
+        logger.info(f"✅ Ollama.list() returned: {type(models)}")
+        available_models = []
+        for model in models.models:
+            # Strip version tags (e.g., ":latest") to get base model name
+            base_name = model.model.split(':')[0]
+            available_models.append(base_name)
+        
+        logger.info(f"✅ Found models: {available_models}")
         
         if not available_models:
             return False, "Ollama is running but no models are installed."
         
         return True, f"Ollama is running with {len(available_models)} models available."
         
-    except ImportError:
+    except ImportError as e:
+        logger.error(f"❌ ImportError: {e}")
         return False, "Ollama package not installed."
     except Exception as e:
+        logger.error(f"❌ Other exception: {e}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
         return False, f"Ollama service not available: {str(e)}"
+
+def get_full_model_name(base_name: str) -> str:
+    """
+    Get the full model name (with tag) for a base model name.
+    
+    Args:
+        base_name (str): Base model name like 'mistral' or 'llama3'
+        
+    Returns:
+        str: Full model name like 'mistral:latest' or 'llama3:latest'
+    """
+    try:
+        import ollama
+        models = ollama.list()
+        for model in models.models:
+            if model.model.startswith(base_name + ':'):
+                return model.model
+        # If not found with tag, return base name (might work for some models)
+        return base_name
+    except Exception:
+        # Fallback to common pattern
+        return f"{base_name}:latest"
 
 # Import pandas for context generation
 try:
     import pandas as pd
 except ImportError:
     pd = None
+
+def debug_ollama_import():
+    """Debug function to check ollama import status"""
+    try:
+        import ollama
+        return f"✅ Ollama imported successfully"
+    except ImportError as e:
+        return f"❌ Import error: {e}"
+    except Exception as e:
+        return f"❌ Other error: {e}"
