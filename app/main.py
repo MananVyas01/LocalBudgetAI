@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-from datetime import datetime, date
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, date, timedelta
 import sys
 import os
 
@@ -9,9 +10,11 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database import ExpenseDatabase
-from analyzer import (analyze_expenses_by_category, plot_expense_bar_chart, 
-                     plot_expense_pie_chart, analyze_monthly_trend, 
-                     plot_monthly_trend, generate_expense_summary_report)
+from analyzer import (analyze_expenses_by_category, analyze_monthly_trend, 
+                     generate_expense_summary_report)
+from plotly_analyzer import (create_interactive_bar_chart, create_interactive_pie_chart,
+                           create_interactive_line_chart, create_dashboard_overview,
+                           create_category_comparison)
 
 # Configure page
 st.set_page_config(
@@ -20,6 +23,24 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize session state
+def init_session_state():
+    """Initialize session state variables for persistent UI state"""
+    if 'filters' not in st.session_state:
+        st.session_state.filters = {
+            'date_range': None,
+            'categories': [],
+            'amount_range': None
+        }
+    if 'last_query' not in st.session_state:
+        st.session_state.last_query = ""
+    if 'selected_page' not in st.session_state:
+        st.session_state.selected_page = "📊 Dashboard"
+    if 'editing_expense' not in st.session_state:
+        st.session_state.editing_expense = None
+
+init_session_state()
 
 # Custom CSS for better styling
 st.markdown("""
@@ -76,6 +97,170 @@ st.markdown("""
 def get_database():
     """Initialize and return the database connection."""
     return ExpenseDatabase()
+
+def create_sidebar_filters(db):
+    """Create enhanced sidebar with filters and navigation"""
+    st.sidebar.title("🧭 Navigation")
+    
+    # Navigation
+    page = st.sidebar.radio(
+        "Choose a section:",
+        ["📊 Dashboard", "📁 Data Input", "📋 Manage Expenses", "📈 Analytics"],
+        key="navigation",
+        index=["📊 Dashboard", "📁 Data Input", "📋 Manage Expenses", "📈 Analytics"].index(st.session_state.selected_page)
+    )
+    
+    # Update session state
+    st.session_state.selected_page = page
+    
+    # Filters section
+    st.sidebar.markdown("---")
+    st.sidebar.title("🔍 Filters")
+    
+    # Get available data for filter options
+    stats = db.get_database_stats()
+    
+    if stats['total_records'] > 0:
+        # Date range filter
+        st.sidebar.subheader("📅 Date Range")
+        
+        # Get min and max dates from database
+        expenses_df = db.fetch_expenses()
+        if not expenses_df.empty:
+            min_date = expenses_df['date'].min().date()
+            max_date = expenses_df['date'].max().date()
+            
+            # Date range selector
+            use_date_filter = st.sidebar.checkbox("Filter by date range", key="use_date_filter")
+            
+            if use_date_filter:
+                date_range = st.sidebar.date_input(
+                    "Select date range:",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="date_range_filter"
+                )
+                
+                # Handle both single date and date range
+                if isinstance(date_range, tuple) and len(date_range) == 2:
+                    st.session_state.filters['date_range'] = date_range
+                else:
+                    st.session_state.filters['date_range'] = (date_range, date_range) if date_range else None
+            else:
+                st.session_state.filters['date_range'] = None
+        
+        # Category filter
+        st.sidebar.subheader("📊 Categories")
+        categories = db.get_categories()
+        
+        if categories:
+            selected_categories = st.sidebar.multiselect(
+                "Select categories:",
+                options=categories,
+                default=st.session_state.filters.get('categories', []),
+                key="category_filter"
+            )
+            st.session_state.filters['categories'] = selected_categories
+        
+        # Amount range filter
+        st.sidebar.subheader("💰 Amount Range")
+        use_amount_filter = st.sidebar.checkbox("Filter by amount", key="use_amount_filter")
+        
+        if use_amount_filter:
+            # Get min and max amounts (absolute values for better UX)
+            min_amount = float(expenses_df['amount'].abs().min())
+            max_amount = float(expenses_df['amount'].abs().max())
+            
+            amount_range = st.sidebar.slider(
+                "Amount range ($):",
+                min_value=min_amount,
+                max_value=max_amount,
+                value=(min_amount, max_amount),
+                step=1.0,
+                key="amount_range_filter"
+            )
+            st.session_state.filters['amount_range'] = amount_range
+        else:
+            st.session_state.filters['amount_range'] = None
+        
+        # Quick filter buttons
+        st.sidebar.subheader("⚡ Quick Filters")
+        col1, col2 = st.sidebar.columns(2)
+        
+        with col1:
+            if st.button("This Month", key="filter_this_month"):
+                today = date.today()
+                first_day = today.replace(day=1)
+                st.session_state.filters['date_range'] = (first_day, today)
+                st.rerun()
+        
+        with col2:
+            if st.button("Last 30 Days", key="filter_last_30"):
+                today = date.today()
+                thirty_days_ago = today - timedelta(days=30)
+                st.session_state.filters['date_range'] = (thirty_days_ago, today)
+                st.rerun()
+        
+        # Clear filters button
+        if st.sidebar.button("🔄 Clear All Filters", key="clear_filters"):
+            st.session_state.filters = {
+                'date_range': None,
+                'categories': [],
+                'amount_range': None
+            }
+            st.rerun()
+    
+    else:
+        st.sidebar.info("Add some data to enable filters!")
+    
+    # Filter summary
+    if any(st.session_state.filters.values()):
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📋 Active Filters")
+        
+        if st.session_state.filters['date_range']:
+            start, end = st.session_state.filters['date_range']
+            st.sidebar.text(f"📅 {start} to {end}")
+        
+        if st.session_state.filters['categories']:
+            st.sidebar.text(f"📊 {len(st.session_state.filters['categories'])} categories")
+        
+        if st.session_state.filters['amount_range']:
+            min_amt, max_amt = st.session_state.filters['amount_range']
+            st.sidebar.text(f"💰 ${min_amt:.0f} - ${max_amt:.0f}")
+    
+    return page
+
+def apply_filters_to_dataframe(df, filters):
+    """Apply filters to DataFrame based on session state"""
+    if df.empty:
+        return df
+    
+    filtered_df = df.copy()
+    
+    # Apply date range filter
+    if filters.get('date_range'):
+        start_date, end_date = filters['date_range']
+        filtered_df = filtered_df[
+            (filtered_df['date'] >= pd.to_datetime(start_date)) &
+            (filtered_df['date'] <= pd.to_datetime(end_date))
+        ]
+    
+    # Apply category filter
+    if filters.get('categories'):
+        filtered_df = filtered_df[filtered_df['category'].isin(filters['categories'])]
+    
+    # Apply amount range filter
+    if filters.get('amount_range'):
+        min_amount, max_amount = filters['amount_range']
+        # Filter by absolute amount to handle both income and expenses
+        filtered_df = filtered_df[
+            (filtered_df['amount'].abs() >= min_amount) &
+            (filtered_df['amount'].abs() <= max_amount)
+        ]
+    
+    return filtered_df
 
 def validate_required_columns(df):
     """Validate that the uploaded CSV contains required columns"""
@@ -233,7 +418,7 @@ def show_manual_entry_section(db):
                 st.error(f"❌ Error adding entry: {str(e)}")
 
 def show_expense_management_section(db):
-    """Show expense management (view, edit, delete)"""
+    """Show expense management (view, edit, delete) with enhanced filtering"""
     st.subheader("📋 Expense Management")
     
     # Fetch all expenses
@@ -242,6 +427,9 @@ def show_expense_management_section(db):
     if expenses_df.empty:
         st.info("📭 No expenses found. Add some entries to get started!")
         return
+    
+    # Apply filters
+    filtered_df = apply_filters_to_dataframe(expenses_df, st.session_state.filters)
     
     # Display database stats
     stats = db.get_database_stats()
@@ -256,41 +444,15 @@ def show_expense_management_section(db):
     with col4:
         st.metric("Net Savings", f"${stats['net_savings']:.2f}")
     
-    # Filters
-    st.markdown("### 🔍 Filters")
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
-    
-    with filter_col1:
-        categories = db.get_categories()
-        selected_category = st.selectbox(
-            "Category",
-            options=["All"] + categories,
-            key="filter_category"
-        )
-    
-    with filter_col2:
-        start_date = st.date_input("Start Date", key="filter_start")
-    
-    with filter_col3:
-        end_date = st.date_input("End Date", key="filter_end")
-    
-    # Apply filters
-    filtered_df = expenses_df.copy()
-    
-    if selected_category != "All":
-        filtered_df = filtered_df[filtered_df['category'] == selected_category]
-    
-    if start_date:
-        filtered_df = filtered_df[filtered_df['date'] >= pd.to_datetime(start_date)]
-    
-    if end_date:
-        filtered_df = filtered_df[filtered_df['date'] <= pd.to_datetime(end_date)]
+    # Show filter status
+    if any(st.session_state.filters.values()):
+        st.info(f"📊 Showing {len(filtered_df)} of {len(expenses_df)} records based on active filters")
     
     # Display expenses table
     st.markdown("### 📊 Expense Records")
     
     if filtered_df.empty:
-        st.info("No records match the selected filters.")
+        st.warning("⚠️ No records match the selected filters. Try adjusting your filter settings.")
         return
     
     # Format the dataframe for display
@@ -335,7 +497,7 @@ def show_expense_management_section(db):
                         st.error("❌ Failed to delete expense.")
     
     # Edit form
-    if 'editing_expense' in st.session_state:
+    if st.session_state.editing_expense:
         expense = st.session_state.editing_expense
         
         st.markdown("### 📝 Edit Expense")
@@ -392,7 +554,7 @@ def show_expense_management_section(db):
                         
                         if success:
                             st.success("✅ Expense updated successfully!")
-                            del st.session_state.editing_expense
+                            st.session_state.editing_expense = None
                             st.rerun()
                         else:
                             st.error("❌ Failed to update expense.")
@@ -402,12 +564,12 @@ def show_expense_management_section(db):
             
             with col2:
                 if st.form_submit_button("❌ Cancel"):
-                    del st.session_state.editing_expense
+                    st.session_state.editing_expense = None
                     st.rerun()
 
 def show_analytics_section(db):
-    """Show analytics and visualizations"""
-    st.subheader("📊 Analytics Dashboard")
+    """Show enhanced analytics and visualizations with Plotly"""
+    st.subheader("📊 Interactive Analytics Dashboard")
     
     # Fetch all expenses
     expenses_df = db.fetch_expenses()
@@ -416,8 +578,19 @@ def show_analytics_section(db):
         st.info("📭 No data available for analysis. Add some expenses first!")
         return
     
+    # Apply filters
+    filtered_df = apply_filters_to_dataframe(expenses_df, st.session_state.filters)
+    
+    if filtered_df.empty:
+        st.warning("⚠️ No data matches the current filters. Try adjusting your filter settings.")
+        return
+    
+    # Show filter status
+    if any(st.session_state.filters.values()):
+        st.info(f"📊 Showing {len(filtered_df)} of {len(expenses_df)} records based on active filters")
+    
     # Convert to format expected by analyzer
-    df_analysis = expenses_df.copy()
+    df_analysis = filtered_df.copy()
     df_analysis.columns = df_analysis.columns.str.title()
     df_analysis['Date'] = df_analysis['Date'].dt.strftime('%Y-%m-%d')
     
@@ -426,36 +599,148 @@ def show_analytics_section(db):
         category_summary = analyze_expenses_by_category(df_analysis)
         
         if not category_summary.empty:
-            # Display charts
-            col1, col2 = st.columns(2)
+            # Create tabs for different views
+            tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Trends", "🔍 Details", "⚖️ Compare"])
             
-            with col1:
-                st.markdown("#### 📊 Expenses by Category")
-                fig1, ax1 = plt.subplots(figsize=(10, 6))
-                plot_expense_bar_chart(category_summary, ax=ax1)
-                st.pyplot(fig1)
+            with tab1:
+                # Overview charts
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("� Expenses by Category")
+                    bar_fig = create_interactive_bar_chart(category_summary, 
+                                                         "Interactive Spending by Category")
+                    st.plotly_chart(bar_fig, use_container_width=True)
+                
+                with col2:
+                    st.subheader("🥧 Expense Distribution")
+                    pie_fig = create_interactive_pie_chart(category_summary,
+                                                         "Interactive Expense Distribution")
+                    st.plotly_chart(pie_fig, use_container_width=True)
+                
+                # Monthly trend
+                monthly_trend = analyze_monthly_trend(df_analysis)
+                
+                if not monthly_trend.empty:
+                    st.subheader("📈 Monthly Expense Trend")
+                    line_fig = create_interactive_line_chart(monthly_trend,
+                                                           "Interactive Monthly Trend")
+                    st.plotly_chart(line_fig, use_container_width=True)
             
-            with col2:
-                st.markdown("#### 🥧 Expense Distribution")
-                fig2, ax2 = plt.subplots(figsize=(8, 8))
-                plot_expense_pie_chart(category_summary, ax=ax2)
-                st.pyplot(fig2)
+            with tab2:
+                # Detailed trend analysis
+                st.subheader("📅 Time-based Analysis")
+                
+                # Monthly trend with more details
+                if not monthly_trend.empty:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.metric("Highest Month", 
+                                monthly_trend.idxmax(), 
+                                f"${monthly_trend.max():.2f}")
+                    
+                    with col2:
+                        st.metric("Lowest Month", 
+                                monthly_trend.idxmin(), 
+                                f"${monthly_trend.min():.2f}")
+                    
+                    # Trend line chart
+                    line_fig = create_interactive_line_chart(monthly_trend,
+                                                           "Detailed Monthly Analysis",
+                                                           show_trend_line=True)
+                    st.plotly_chart(line_fig, use_container_width=True)
+                    
+                    # Monthly statistics
+                    st.subheader("📊 Monthly Statistics")
+                    avg_monthly = monthly_trend.mean()
+                    std_monthly = monthly_trend.std()
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Average Monthly", f"${avg_monthly:.2f}")
+                    with col2:
+                        st.metric("Std Deviation", f"${std_monthly:.2f}")
+                    with col3:
+                        growth_rate = ((monthly_trend.iloc[-1] - monthly_trend.iloc[0]) / monthly_trend.iloc[0] * 100) if len(monthly_trend) > 1 else 0
+                        st.metric("Growth Rate", f"{growth_rate:.1f}%")
             
-            # Monthly trend
-            monthly_trend = analyze_monthly_trend(df_analysis)
+            with tab3:
+                # Detailed breakdown
+                st.subheader("🔍 Detailed Category Breakdown")
+                
+                # Top categories table
+                top_categories = category_summary.head(10)
+                
+                # Create detailed table
+                detail_data = []
+                total_expenses = category_summary.sum()
+                
+                for category, amount in top_categories.items():
+                    percentage = (amount / total_expenses) * 100
+                    detail_data.append({
+                        'Category': category,
+                        'Amount': f"${amount:.2f}",
+                        'Percentage': f"{percentage:.1f}%"
+                    })
+                
+                detail_df = pd.DataFrame(detail_data)
+                st.dataframe(detail_df, use_container_width=True, hide_index=True)
+                
+                # Category insights
+                st.subheader("💡 Category Insights")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**Top Spending Categories:**")
+                    for i, (cat, amount) in enumerate(top_categories.head(3).items(), 1):
+                        st.write(f"{i}. {cat}: ${amount:.2f}")
+                
+                with col2:
+                    st.write("**Spending Distribution:**")
+                    top_3_pct = (top_categories.head(3).sum() / total_expenses * 100)
+                    st.write(f"• Top 3 categories: {top_3_pct:.1f}% of total")
+                    st.write(f"• Total categories: {len(category_summary)}")
+                    st.write(f"• Average per category: ${total_expenses / len(category_summary):.2f}")
             
-            if not monthly_trend.empty:
-                st.markdown("#### 📈 Monthly Trend")
-                fig3, ax3 = plt.subplots(figsize=(12, 6))
-                plot_monthly_trend(monthly_trend, ax=ax3)
-                st.pyplot(fig3)
+            with tab4:
+                # Category comparison
+                st.subheader("⚖️ Category Comparison")
+                
+                categories = list(category_summary.index)
+                selected_for_comparison = st.multiselect(
+                    "Select categories to compare over time:",
+                    options=categories,
+                    default=categories[:3] if len(categories) >= 3 else categories,
+                    key="comparison_categories"
+                )
+                
+                if selected_for_comparison:
+                    comparison_fig = create_category_comparison(df_analysis, selected_for_comparison)
+                    st.plotly_chart(comparison_fig, use_container_width=True)
+                    
+                    # Comparison insights
+                    st.subheader("📋 Comparison Insights")
+                    comparison_data = []
+                    
+                    for category in selected_for_comparison:
+                        cat_amount = category_summary.get(category, 0)
+                        comparison_data.append({
+                            'Category': category,
+                            'Total Amount': f"${cat_amount:.2f}",
+                            'Percentage of Total': f"{(cat_amount / category_summary.sum() * 100):.1f}%"
+                        })
+                    
+                    comparison_df = pd.DataFrame(comparison_data)
+                    st.dataframe(comparison_df, use_container_width=True, hide_index=True)
             
-            # Summary report
-            st.markdown("#### 📋 Summary Report")
+            # Summary report at the bottom
+            st.markdown("---")
+            st.subheader("📋 Summary Report")
             report = generate_expense_summary_report(df_analysis)
             
             if 'error' not in report:
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
                     st.metric("Total Expenses", f"${report['total_expenses']:.2f}")
@@ -469,9 +754,17 @@ def show_analytics_section(db):
                     st.metric("Net Savings", f"${report['net_savings']:.2f}")
                     savings_rate = (report['net_savings'] / report['total_income'] * 100) if report['total_income'] > 0 else 0
                     st.metric("Savings Rate", f"{savings_rate:.1f}%")
+                
+                with col4:
+                    st.metric("Avg Monthly", f"${report['avg_monthly_expense']:.2f}")
+                    st.metric("Months Covered", report['months_covered'])
+        
+        else:
+            st.warning("⚠️ No expense data found in the selected time period.")
     
     except Exception as e:
         st.error(f"❌ Error generating analytics: {str(e)}")
+        st.info("💡 Tip: Check if your data contains valid dates and amounts.")
 
 def main():
     # Header
@@ -481,49 +774,80 @@ def main():
     # Initialize database
     db = get_database()
     
-    # Sidebar navigation
-    st.sidebar.title("🧭 Navigation")
+    # Create enhanced sidebar with filters
+    page = create_sidebar_filters(db)
     
-    page = st.sidebar.radio(
-        "Choose a section:",
-        ["📊 Dashboard", "📁 Data Input", "📋 Manage Expenses", "📈 Analytics"],
-        key="navigation"
-    )
-    
+    # Main content based on navigation
     if page == "📊 Dashboard":
-        st.markdown("## 🏠 Dashboard")
+        st.markdown("## 🏠 Interactive Dashboard")
         
         # Quick stats
         stats = db.get_database_stats()
         
         if stats['total_records'] > 0:
-            col1, col2, col3, col4 = st.columns(4)
+            # Get filtered data for dashboard
+            expenses_df = db.fetch_expenses()
+            filtered_df = apply_filters_to_dataframe(expenses_df, st.session_state.filters)
             
-            with col1:
-                st.metric("Total Records", stats['total_records'])
-            with col2:
-                st.metric("Total Expenses", f"${stats['total_expenses']:.2f}")
-            with col3:
-                st.metric("Total Income", f"${stats['total_income']:.2f}")
-            with col4:
-                st.metric("Net Savings", f"${stats['net_savings']:.2f}")
+            # Show filter status
+            if any(st.session_state.filters.values()):
+                st.info(f"📊 Showing {len(filtered_df)} of {len(expenses_df)} records based on active filters")
             
-            # Recent transactions
-            st.markdown("### 🕐 Recent Transactions")
-            recent_df = db.fetch_expenses(limit=10)
-            
-            if not recent_df.empty:
-                display_df = recent_df.copy()
-                display_df['date'] = display_df['date'].dt.strftime('%Y-%m-%d')
-                display_df['amount'] = display_df['amount'].apply(lambda x: f"${x:.2f}")
-                st.dataframe(display_df[['date', 'amount', 'category', 'description']], 
-                           use_container_width=True, hide_index=True)
+            # Quick stats with filtered data
+            if not filtered_df.empty:
+                # Calculate filtered stats
+                expenses_only = filtered_df[filtered_df['amount'] < 0]
+                income_only = filtered_df[filtered_df['amount'] > 0]
+                
+                filtered_total_expenses = expenses_only['amount'].abs().sum() if not expenses_only.empty else 0
+                filtered_total_income = income_only['amount'].sum() if not income_only.empty else 0
+                filtered_net_savings = filtered_total_income - filtered_total_expenses
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Filtered Records", len(filtered_df), 
+                             delta=len(filtered_df) - stats['total_records'])
+                with col2:
+                    st.metric("Filtered Expenses", f"${filtered_total_expenses:.2f}",
+                             delta=f"${filtered_total_expenses - stats['total_expenses']:.2f}")
+                with col3:
+                    st.metric("Filtered Income", f"${filtered_total_income:.2f}",
+                             delta=f"${filtered_total_income - stats['total_income']:.2f}")
+                with col4:
+                    st.metric("Filtered Net Savings", f"${filtered_net_savings:.2f}",
+                             delta=f"${filtered_net_savings - stats['net_savings']:.2f}")
+                
+                # Dashboard overview chart
+                if len(filtered_df) > 0:
+                    # Convert to analyzer format
+                    df_analysis = filtered_df.copy()
+                    df_analysis.columns = df_analysis.columns.str.title()
+                    df_analysis['Date'] = df_analysis['Date'].dt.strftime('%Y-%m-%d')
+                    
+                    st.subheader("📊 Dashboard Overview")
+                    dashboard_fig = create_dashboard_overview(df_analysis)
+                    st.plotly_chart(dashboard_fig, use_container_width=True)
+                
+                # Recent transactions
+                st.markdown("### 🕐 Recent Transactions")
+                recent_df = filtered_df.head(10)
+                
+                if not recent_df.empty:
+                    display_df = recent_df.copy()
+                    display_df['date'] = display_df['date'].dt.strftime('%Y-%m-%d')
+                    display_df['amount'] = display_df['amount'].apply(lambda x: f"${x:.2f}")
+                    st.dataframe(display_df[['date', 'amount', 'category', 'description']], 
+                               use_container_width=True, hide_index=True)
+            else:
+                st.warning("⚠️ No data matches your current filters. Try adjusting the filter settings.")
         else:
             st.markdown("""
             <div class="upload-section">
                 <h3>🚀 Welcome to LocalBudgetAI!</h3>
                 <p>Get started by adding your first expense or uploading a CSV file.</p>
                 <p>Use the navigation menu to explore different features.</p>
+                <p>💡 <strong>New:</strong> Use the sidebar filters to analyze specific time periods and categories!</p>
             </div>
             """, unsafe_allow_html=True)
     
