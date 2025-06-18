@@ -15,6 +15,8 @@ from analyzer import (analyze_expenses_by_category, analyze_monthly_trend,
 from plotly_analyzer import (create_interactive_bar_chart, create_interactive_pie_chart,
                            create_interactive_line_chart, create_dashboard_overview,
                            create_category_comparison)
+from llm_helper import (query_expense_ai, get_expense_context, check_ollama_status, 
+                       get_available_models)
 
 # Configure page
 st.set_page_config(
@@ -39,6 +41,10 @@ def init_session_state():
         st.session_state.selected_page = "📊 Dashboard"
     if 'editing_expense' not in st.session_state:
         st.session_state.editing_expense = None
+    if 'preferred_ai_model' not in st.session_state:
+        st.session_state.preferred_ai_model = "mistral"
+    if 'ai_chat_history' not in st.session_state:
+        st.session_state.ai_chat_history = []
 
 init_session_state()
 
@@ -105,9 +111,9 @@ def create_sidebar_filters(db):
     # Navigation
     page = st.sidebar.radio(
         "Choose a section:",
-        ["📊 Dashboard", "📁 Data Input", "📋 Manage Expenses", "📈 Analytics"],
+        ["📊 Dashboard", "📁 Data Input", "📋 Manage Expenses", "📈 Analytics", "🤖 AI Assistant"],
         key="navigation",
-        index=["📊 Dashboard", "📁 Data Input", "📋 Manage Expenses", "📈 Analytics"].index(st.session_state.selected_page)
+        index=["📊 Dashboard", "📁 Data Input", "📋 Manage Expenses", "📈 Analytics", "🤖 AI Assistant"].index(st.session_state.selected_page)
     )
     
     # Update session state
@@ -766,6 +772,184 @@ def show_analytics_section(db):
         st.error(f"❌ Error generating analytics: {str(e)}")
         st.info("💡 Tip: Check if your data contains valid dates and amounts.")
 
+def show_ai_assistant_section(db):
+    """Show AI Assistant with dual model support"""
+    st.subheader("🤖 AI Assistant - Ask About Your Expenses")
+    
+    # Check Ollama status
+    is_available, status_msg = check_ollama_status()
+    
+    if not is_available:
+        st.warning(f"⚠️ **AI Assistant Setup Required**\n\n{status_msg}")
+        
+        with st.expander("🛠️ Setup Instructions"):
+            st.markdown("""
+            **To use the AI Assistant, you need to set up Ollama:**
+            
+            1. **Install Ollama:** Visit [ollama.ai](https://ollama.ai) and download for your system
+            
+            2. **Start Ollama service:**
+               ```bash
+               ollama serve
+               ```
+            
+            3. **Install AI models:**
+               ```bash
+               ollama pull mistral
+               ollama pull llama3
+               ```
+            
+            4. **Verify installation:**
+               ```bash
+               ollama list
+               ```
+            
+            5. **Refresh this page** after setup is complete
+            
+            💡 **Note:** All AI processing happens locally on your machine for complete privacy!
+            """)
+        return
+    
+    st.success(f"✅ {status_msg}")
+    
+    # Fetch expenses for context
+    expenses_df = db.fetch_expenses()
+    
+    if expenses_df.empty:
+        st.info("📭 Add some expense data first to start chatting with the AI assistant!")
+        return
+    
+    # Apply filters to get current data context
+    filtered_df = apply_filters_to_dataframe(expenses_df, st.session_state.filters)
+    
+    # Model selection
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("### 💬 Chat with Your Financial Assistant")
+    
+    with col2:
+        available_models = get_available_models()
+        if 'mistral' in available_models and 'llama3' in available_models:
+            model_options = ['mistral', 'llama3']
+        else:
+            model_options = available_models[:2] if len(available_models) >= 2 else available_models
+        
+        if model_options:
+            selected_model = st.selectbox(
+                "🧠 AI Model:",
+                options=model_options,
+                index=model_options.index(st.session_state.preferred_ai_model) if st.session_state.preferred_ai_model in model_options else 0,
+                key="ai_model_selector"
+            )
+            st.session_state.preferred_ai_model = selected_model
+        else:
+            st.error("No AI models available. Please install mistral or llama3.")
+            return
+    
+    # Show current data context summary
+    if any(st.session_state.filters.values()):
+        st.info(f"🔍 AI will analyze {len(filtered_df)} filtered records from your expense data")
+    else:
+        st.info(f"📊 AI will analyze all {len(filtered_df)} records from your expense data")
+    
+    # Chat interface
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        user_query = st.text_input(
+            "Ask me anything about your expenses:",
+            placeholder="e.g., How much did I spend on food last month?",
+            key="ai_query_input",
+            value=st.session_state.last_query
+        )
+    
+    with col2:
+        ask_button = st.button("🚀 Ask AI", type="primary", key="ask_ai_button")
+    
+    # Example questions
+    st.markdown("💡 **Example questions:**")
+    example_cols = st.columns(3)
+    
+    with example_cols[0]:
+        if st.button("💰 What's my biggest expense category?", key="example1"):
+            st.session_state.last_query = "What's my biggest expense category?"
+            st.rerun()
+    
+    with example_cols[1]:
+        if st.button("📈 How are my spending trends?", key="example2"):
+            st.session_state.last_query = "How are my spending trends over time?"
+            st.rerun()
+    
+    with example_cols[2]:
+        if st.button("💡 Give me budgeting advice", key="example3"):
+            st.session_state.last_query = "Give me budgeting advice based on my spending patterns"
+            st.rerun()
+    
+    # Process AI query
+    if (ask_button or user_query != st.session_state.last_query) and user_query:
+        st.session_state.last_query = user_query
+        
+        # Generate context from current data
+        context = get_expense_context(filtered_df, st.session_state.filters)
+        
+        # Show thinking spinner
+        with st.spinner(f"🤔 {selected_model} is analyzing your expenses..."):
+            ai_response, used_model = query_expense_ai(user_query, context, selected_model)
+        
+        # Display response
+        if used_model:
+            # Successful response
+            if used_model != selected_model:
+                st.warning(f"⚠️ Primary model {selected_model} failed, used {used_model} instead")
+            
+            st.markdown(f"### 🤖 **AI Response** ({used_model})")
+            st.markdown(ai_response)
+            
+            # Add to chat history
+            chat_entry = {
+                "query": user_query,
+                "response": ai_response,
+                "model": used_model,
+                "timestamp": datetime.now()
+            }
+            st.session_state.ai_chat_history.append(chat_entry)
+            
+            # Try again button
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button("🔄 Try Again", key="try_again_button"):
+                    st.rerun()
+        else:
+            # Error occurred
+            st.error("❌ **AI Assistant Error**")
+            st.markdown(ai_response)
+            
+            # Try again button for errors
+            if st.button("🔄 Try Again", key="error_try_again"):
+                st.rerun()
+    
+    # Chat history
+    if st.session_state.ai_chat_history:
+        st.markdown("---")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("### 📜 Chat History")
+        with col2:
+            if st.button("🗑️ Clear History", key="clear_chat_history"):
+                st.session_state.ai_chat_history = []
+                st.rerun()
+        
+        # Show recent chats (last 5)
+        recent_chats = st.session_state.ai_chat_history[-5:]
+        
+        for i, chat in enumerate(reversed(recent_chats)):
+            with st.expander(f"💬 {chat['query'][:50]}... ({chat['model']})"):
+                st.markdown(f"**Question:** {chat['query']}")
+                st.markdown(f"**Answer:** {chat['response']}")
+                st.caption(f"Model: {chat['model']} • {chat['timestamp'].strftime('%Y-%m-%d %H:%M')}")
+
 def main():
     # Header
     st.markdown('<h1 class="main-header">💰 LocalBudgetAI</h1>', unsafe_allow_html=True)
@@ -872,6 +1056,12 @@ def main():
     
     elif page == "📈 Analytics":
         show_analytics_section(db)
+    
+    elif page == "🤖 AI Assistant":
+        show_ai_assistant_section(db)
+    
+    elif page == "🤖 AI Assistant":
+        show_ai_assistant_section(db)
 
 if __name__ == "__main__":
     main()
