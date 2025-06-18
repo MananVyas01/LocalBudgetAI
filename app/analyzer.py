@@ -16,3 +16,37 @@ def analyze_expenses_by_category(df: pd.DataFrame) -> pd.Series:
     # Only consider negative amounts as expenses
     expenses = df[df['Amount'] < 0]
     return expenses.groupby('Category')['Amount'].sum().abs().sort_values(ascending=False)
+
+def plot_expense_bar_chart(expense_summary: pd.Series, ax=None):
+    """
+    Plot a bar chart of total spending by category.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+    expense_summary.plot(kind='bar', ax=ax, color='skyblue', edgecolor='black')
+    ax.set_title('Total Spending by Category')
+    ax.set_xlabel('Category')
+    ax.set_ylabel('Total Spent')
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=30, ha='right')
+    plt.tight_layout()
+    return ax
+
+def plot_expense_pie_chart(expense_summary: pd.Series, ax=None):
+    """
+    Plot a pie chart of percentage distribution of expenses by category.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+    expense_summary.plot(
+        kind='pie',
+        ax=ax,
+        autopct='%1.1f%%',
+        startangle=90,
+        counterclock=False,
+        legend=False,
+        wedgeprops={'edgecolor': 'white'}
+    )
+    ax.set_ylabel('')
+    ax.set_title('Expense Distribution by Category')
+    plt.tight_layout()
+    return ax
