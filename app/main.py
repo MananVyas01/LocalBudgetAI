@@ -17,6 +17,8 @@ from plotly_analyzer import (create_interactive_bar_chart, create_interactive_pi
                            create_category_comparison)
 from llm_helper import (query_expense_ai, get_expense_context, check_ollama_status, 
                        get_available_models)
+from advanced_llm_helper import (advanced_query_expense_ai, smart_expense_categorization,
+                               AdvancedFinancialAI)
 
 # Configure page
 st.set_page_config(
@@ -416,8 +418,8 @@ def show_csv_upload_section(db):
             st.info("Please make sure your file is a valid CSV format.")
 
 def show_manual_entry_section(db):
-    """Show manual entry form"""
-    st.subheader("✏️ Manual Entry")
+    """Show manual entry form with smart categorization"""
+    st.subheader("✏️ Smart Manual Entry")
     
     # Get existing categories for dropdown
     existing_categories = db.get_categories()
@@ -445,11 +447,34 @@ def show_manual_entry_section(db):
             )
         
         with col2:
-            # Category selection with option to add new
+            # Smart category suggestion
+            description = st.text_area(
+                "📝 Description",
+                placeholder="e.g., Whole Foods Market, Gas Station, Netflix subscription...",
+                height=100,
+                help="Enter a description - AI will suggest a category!"
+            )
+            
+            # Auto-suggest category based on description
+            suggested_category = ""
+            if description and amount != 0:
+                suggested_category = smart_expense_categorization(description, amount)
+                if suggested_category != "Other":
+                    st.info(f"🤖 **Smart Suggestion:** {suggested_category}")
+            
+            # Category selection with AI suggestion
+            category_options = ["Select existing..."] + sorted(all_categories) + ["➕ Add new category"]
+            
+            # Pre-select suggested category if available
+            default_index = 0
+            if suggested_category and suggested_category in all_categories:
+                default_index = category_options.index(suggested_category)
+            
             category_option = st.selectbox(
                 "📊 Category",
-                options=["Select existing..."] + sorted(all_categories) + ["➕ Add new category"],
-                help="Choose a category or add a new one"
+                options=category_options,
+                index=default_index,
+                help="AI-suggested category based on description, or choose your own"
             )
             
             if category_option == "➕ Add new category":
@@ -459,11 +484,13 @@ def show_manual_entry_section(db):
             else:
                 category = category_option
         
-        description = st.text_area(
-            "📝 Description (Optional)",
-            placeholder="Add a description for this transaction...",
-            height=100
-        )
+        # Advanced features
+        with st.expander("🔬 Advanced Options"):
+            col1, col2 = st.columns(2)
+            with col1:
+                recurring = st.checkbox("🔄 Recurring Transaction", help="Mark as a recurring expense/income")
+            with col2:
+                important = st.checkbox("⭐ Important Transaction", help="Mark as important for tracking")
         
         # Submit button
         submitted = st.form_submit_button("💾 Add Entry", type="primary")
@@ -488,7 +515,21 @@ def show_manual_entry_section(db):
                 )
                 
                 transaction_type = "income" if amount > 0 else "expense"
-                st.success(f"✅ Successfully added {transaction_type}: ${abs(amount):.2f} in {category}")
+                
+                # Show success with smart insights
+                success_msg = f"✅ Successfully added {transaction_type}: ${abs(amount):.2f} in {category}"
+                if suggested_category and suggested_category == category:
+                    success_msg += f" (AI suggestion used! 🤖)"
+                
+                st.success(success_msg)
+                
+                # Show additional insights for larger transactions
+                if abs(amount) > 100:
+                    if amount < 0:  # Expense
+                        st.info(f"💡 **Spending Insight:** This is a significant expense. Consider if it aligns with your budget goals.")
+                    else:  # Income
+                        st.info(f"💰 **Income Insight:** Great income addition! Consider allocating some to savings.")
+                
                 st.rerun()
                 
             except Exception as e:
@@ -844,8 +885,20 @@ def show_analytics_section(db):
         st.info("💡 Tip: Check if your data contains valid dates and amounts.")
 
 def show_ai_assistant_section(db):
-    """Show AI Assistant with dual model support"""
-    st.subheader("🤖 AI Assistant - Ask About Your Expenses")
+    """Show Enhanced AI Assistant with Advanced NLP and Financial Intelligence"""
+    st.subheader("🤖 Advanced AI Financial Advisor")
+    
+    # AI Mode Selection
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("### 🧠 Choose Your AI Experience")
+    with col2:
+        ai_mode = st.selectbox(
+            "AI Mode:",
+            ["🚀 Advanced Mode", "📝 Basic Mode"],
+            key="ai_mode_selector",
+            help="Advanced Mode uses enhanced NLP and financial intelligence"
+        )
     
     # Check Ollama status
     is_available, status_msg = check_ollama_status()
@@ -881,7 +934,31 @@ def show_ai_assistant_section(db):
             """)
         return
     
-    st.success(f"✅ {status_msg}")
+    # Show AI capabilities based on mode
+    if ai_mode == "🚀 Advanced Mode":
+        st.success(f"✅ {status_msg} - Advanced NLP & Financial Intelligence Enabled")
+        
+        # Advanced AI capabilities info
+        with st.expander("🔬 Advanced AI Capabilities"):
+            st.markdown("""
+            **🧠 Enhanced NLP Features:**
+            - Intent recognition and context understanding
+            - Financial domain expertise and terminology
+            - Predictive analytics and trend forecasting  
+            - Personalized budgeting recommendations
+            - Behavioral spending pattern analysis
+            - Smart expense categorization
+            
+            **📊 Advanced Analysis:**
+            - Temporal spending patterns
+            - Budget optimization insights
+            - Cash flow predictions
+            - Financial health scoring
+            - Comparative benchmarking
+            - Goal-based planning advice
+            """)
+    else:
+        st.success(f"✅ {status_msg} - Basic Mode")
     
     # Fetch expenses for context
     expenses_df = db.fetch_expenses()
@@ -897,7 +974,10 @@ def show_ai_assistant_section(db):
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.markdown("### 💬 Chat with Your Financial Assistant")
+        if ai_mode == "🚀 Advanced Mode":
+            st.markdown("### 🎯 Advanced Financial Analysis")
+        else:
+            st.markdown("### 💬 Basic Financial Chat")
     
     with col2:
         available_models = get_available_models()
@@ -924,49 +1004,109 @@ def show_ai_assistant_section(db):
     else:
         st.info(f"📊 AI will analyze all {len(filtered_df)} records from your expense data")
     
+    # Enhanced chat interface for Advanced Mode
+    if ai_mode == "🚀 Advanced Mode":
+        # Advanced query categories
+        st.markdown("#### 🎯 Quick Analysis Categories")
+        analysis_cols = st.columns(4)
+        
+        with analysis_cols[0]:
+            if st.button("📊 Spending Patterns", key="pattern_analysis"):
+                st.session_state.last_query = "Analyze my spending patterns and identify trends. What behavioral insights can you provide?"
+                st.rerun()
+        
+        with analysis_cols[1]:
+            if st.button("🔮 Future Predictions", key="prediction_analysis"):
+                st.session_state.last_query = "Predict my future spending trends and provide forecasting insights for next month."
+                st.rerun()
+        
+        with analysis_cols[2]:
+            if st.button("💰 Budget Optimization", key="budget_analysis"):
+                st.session_state.last_query = "Analyze my budget allocation and provide optimization recommendations based on financial best practices."
+                st.rerun()
+        
+        with analysis_cols[3]:
+            if st.button("🎯 Financial Goals", key="goal_analysis"):
+                st.session_state.last_query = "Help me set realistic financial goals based on my current spending patterns and suggest actionable steps."
+                st.rerun()
+    
     # Chat interface
     col1, col2 = st.columns([4, 1])
     
     with col1:
-        user_query = st.text_input(
-            "Ask me anything about your expenses:",
-            placeholder="e.g., How much did I spend on food last month?",
-            key="ai_query_input",
-            value=st.session_state.last_query
-        )
+        if ai_mode == "🚀 Advanced Mode":
+            user_query = st.text_area(
+                "Ask your advanced financial question:",
+                placeholder="e.g., Analyze my spending behavior and predict next month's expenses with budget recommendations...",
+                key="ai_query_input",
+                value=st.session_state.last_query,
+                height=100
+            )
+        else:
+            user_query = st.text_input(
+                "Ask me anything about your expenses:",
+                placeholder="e.g., How much did I spend on food last month?",
+                key="ai_query_input_basic",
+                value=st.session_state.last_query
+            )
     
     with col2:
-        ask_button = st.button("🚀 Ask AI", type="primary", key="ask_ai_button")
+        st.markdown("<br>", unsafe_allow_html=True)
+        ask_button = st.button("🚀 Analyze" if ai_mode == "🚀 Advanced Mode" else "💬 Ask", 
+                              type="primary", key="ask_ai_button")
     
-    # Example questions
-    st.markdown("💡 **Example questions:**")
-    example_cols = st.columns(3)
-    
-    with example_cols[0]:
-        if st.button("💰 What's my biggest expense category?", key="example1"):
-            st.session_state.last_query = "What's my biggest expense category?"
-            st.rerun()
-    
-    with example_cols[1]:
-        if st.button("📈 How are my spending trends?", key="example2"):
-            st.session_state.last_query = "How are my spending trends over time?"
-            st.rerun()
-    
-    with example_cols[2]:
-        if st.button("💡 Give me budgeting advice", key="example3"):
-            st.session_state.last_query = "Give me budgeting advice based on my spending patterns"
-            st.rerun()
+    # Example questions based on mode
+    if ai_mode == "🚀 Advanced Mode":
+        st.markdown("💡 **Advanced Analysis Examples:**")
+        example_cols = st.columns(2)
+        
+        with example_cols[0]:
+            if st.button("🔍 Deep Spending Analysis", key="advanced_example1"):
+                st.session_state.last_query = "Provide a comprehensive analysis of my spending behavior, identify patterns, and give personalized recommendations for optimization."
+                st.rerun()
+        
+        with example_cols[1]:
+            if st.button("📈 Predictive Financial Planning", key="advanced_example2"):
+                st.session_state.last_query = "Based on my historical data, predict my financial trends and create a strategic plan for better money management."
+                st.rerun()
+    else:
+        st.markdown("💡 **Basic Questions:**")
+        example_cols = st.columns(3)
+        
+        with example_cols[0]:
+            if st.button("💰 Biggest expense category?", key="basic_example1"):
+                st.session_state.last_query = "What's my biggest expense category?"
+                st.rerun()
+        
+        with example_cols[1]:
+            if st.button("📈 Spending trends?", key="basic_example2"):
+                st.session_state.last_query = "How are my spending trends over time?"
+                st.rerun()
+        
+        with example_cols[2]:
+            if st.button("💡 Budgeting advice?", key="basic_example3"):
+                st.session_state.last_query = "Give me budgeting advice based on my spending patterns"
+                st.rerun()
     
     # Process AI query
     if (ask_button or user_query != st.session_state.last_query) and user_query:
         st.session_state.last_query = user_query
         
-        # Generate context from current data
-        context = get_expense_context(filtered_df, st.session_state.filters)
+        # Show thinking spinner with mode-specific message
+        thinking_message = (
+            f"🧠 {selected_model} is performing advanced financial analysis..." 
+            if ai_mode == "🚀 Advanced Mode" 
+            else f"🤔 {selected_model} is analyzing your expenses..."
+        )
         
-        # Show thinking spinner
-        with st.spinner(f"🤔 {selected_model} is analyzing your expenses..."):
-            ai_response, used_model = query_expense_ai(user_query, context, selected_model)
+        with st.spinner(thinking_message):
+            if ai_mode == "🚀 Advanced Mode":
+                # Use advanced AI with NLP and financial intelligence
+                ai_response, used_model = advanced_query_expense_ai(user_query, filtered_df, selected_model)
+            else:
+                # Use basic AI
+                context = get_expense_context(filtered_df, st.session_state.filters)
+                ai_response, used_model = query_expense_ai(user_query, context, selected_model)
         
         # Display response
         if used_model:
@@ -974,7 +1114,8 @@ def show_ai_assistant_section(db):
             if used_model != selected_model:
                 st.warning(f"⚠️ Primary model {selected_model} failed, used {used_model} instead")
             
-            st.markdown(f"### 🤖 **AI Response** ({used_model})")
+            mode_icon = "🧠" if ai_mode == "🚀 Advanced Mode" else "🤖"
+            st.markdown(f"### {mode_icon} **AI Response** ({used_model} - {ai_mode.split()[0]})")
             st.markdown(ai_response)
             
             # Add to chat history
@@ -982,15 +1123,19 @@ def show_ai_assistant_section(db):
                 "query": user_query,
                 "response": ai_response,
                 "model": used_model,
+                "mode": ai_mode,
                 "timestamp": datetime.now()
             }
             st.session_state.ai_chat_history.append(chat_entry)
             
-            # Try again button
-            col1, col2 = st.columns([1, 4])
+            # Action buttons
+            col1, col2, col3 = st.columns([1, 1, 3])
             with col1:
                 if st.button("🔄 Try Again", key="try_again_button"):
                     st.rerun()
+            with col2:
+                if st.button("💾 Save Analysis", key="save_analysis"):
+                    st.success("Analysis saved to chat history!")
         else:
             # Error occurred
             st.error("❌ **AI Assistant Error**")
@@ -1000,26 +1145,27 @@ def show_ai_assistant_section(db):
             if st.button("🔄 Try Again", key="error_try_again"):
                 st.rerun()
     
-    # Chat history
+    # Enhanced Chat history
     if st.session_state.ai_chat_history:
         st.markdown("---")
         
         col1, col2 = st.columns([3, 1])
         with col1:
-            st.markdown("### 📜 Chat History")
+            st.markdown("### 📜 Analysis History")
         with col2:
             if st.button("🗑️ Clear History", key="clear_chat_history"):
                 st.session_state.ai_chat_history = []
                 st.rerun()
         
-        # Show recent chats (last 5)
+        # Show recent chats with mode indicators
         recent_chats = st.session_state.ai_chat_history[-5:]
         
         for i, chat in enumerate(reversed(recent_chats)):
-            with st.expander(f"💬 {chat['query'][:50]}... ({chat['model']})"):
+            mode_emoji = "🧠" if "Advanced" in chat.get('mode', '') else "💬"
+            with st.expander(f"{mode_emoji} {chat['query'][:60]}... ({chat['model']})"):
                 st.markdown(f"**Question:** {chat['query']}")
                 st.markdown(f"**Answer:** {chat['response']}")
-                st.caption(f"Model: {chat['model']} • {chat['timestamp'].strftime('%Y-%m-%d %H:%M')}")
+                st.caption(f"Model: {chat['model']} • Mode: {chat.get('mode', 'Basic')} • {chat['timestamp'].strftime('%Y-%m-%d %H:%M')}")
 
 def main():
     # Header

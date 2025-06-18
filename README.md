@@ -23,9 +23,17 @@
 - � **Trend Analysis** - Monthly patterns, category breakdowns, and comparative insights
 - 🔍 **Advanced Filtering** - Date ranges, categories, amounts with session persistence
 
-### 🤖 **AI-Powered Assistant**
+### 🤖 **Advanced AI-Powered Assistant**
+- **🚀 Advanced Mode** - Professional-grade financial analysis with NLP and financial intelligence
+- **📝 Basic Mode** - Simple Q&A for quick financial questions
+- **🧠 Intent Recognition** - Understands complex financial queries and contexts
+- **🔮 Predictive Analytics** - Forecasts spending trends and future financial position
+- **💰 Budget Optimization** - Personalized recommendations based on financial best practices
+- **⚡ Smart Categorization** - AI-powered expense categorization from transaction descriptions
+- **📊 Behavioral Analysis** - Identifies spending patterns and suggests improvements
+- **🎯 Goal-Based Planning** - Helps set and track realistic financial objectives
 - **Dual LLM Support** - Choose between Mistral and Llama3 models via Ollama
-- **Natural Language Queries** - Ask questions about your spending in plain English
+- **Natural Language Queries** - Ask sophisticated questions about your spending
 - **Context-Aware Responses** - AI analyzes your filtered data for personalized insights
 - **Automatic Fallback** - Seamless switching between models if one fails
 
