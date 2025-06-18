@@ -495,15 +495,22 @@ def show_csv_upload_section(db):
                         df_import = df_mapped.copy()
 
                         # Convert column names to lowercase for database import
-                        df_import.columns = df_import.columns.str.lower()
-
-                        # Import to database
+                        df_import.columns = df_import.columns.str.lower()                        # Import to database
                         imported_count = db.import_from_dataframe(df_import)
-
+                        
                         if imported_count > 0:
                             st.success(
                                 f"✅ Successfully imported {imported_count} records to database!"
                             )
+                            # Clear the cached database to ensure fresh data loading
+                            get_database.clear()
+                            # Clear any filters to show all new data
+                            if 'filters' in st.session_state:
+                                st.session_state.filters = {
+                                    "date_range": None,
+                                    "categories": [],
+                                    "amount_range": None,
+                                }
                             st.rerun()
                         else:
                             st.warning("⚠️ No valid records found to import.")
@@ -664,6 +671,39 @@ def show_expense_management_section(db):
     if expenses_df.empty:
         st.info("📭 No expenses found. Add some entries to get started!")
         return
+
+    # Add bulk actions header with delete all option
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("### 🔧 Bulk Actions")
+    with col2:
+        if st.button("🗑️ Delete All Data", type="secondary", key="manage_delete_all", help="⚠️ Permanently delete all data"):
+            # Show confirmation
+            st.warning("⚠️ **This will delete ALL expense data!** This action cannot be undone.")
+            
+            col_confirm, col_cancel = st.columns(2)
+            with col_confirm:
+                if st.button("✅ Confirm Delete All", type="primary", key="manage_confirm_delete"):
+                    try:
+                        deleted_count = db.delete_all_data()
+                        st.success(f"✅ Successfully deleted {deleted_count} records!")
+                        # Clear cached data
+                        get_database.clear()
+                        if 'filters' in st.session_state:
+                            st.session_state.filters = {
+                                "date_range": None,
+                                "categories": [],
+                                "amount_range": None,
+                            }
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error deleting data: {str(e)}")
+            
+            with col_cancel:
+                if st.button("❌ Cancel", key="manage_cancel_delete"):
+                    st.rerun()
+
+    st.markdown("---")
 
     # Apply filters
     filtered_df = apply_filters_to_dataframe(expenses_df, st.session_state.filters)
@@ -826,12 +866,35 @@ def show_analytics_section(db):
     if any(st.session_state.filters.values()):
         st.info(
             f"📊 Showing {len(filtered_df)} of {len(expenses_df)} records based on active filters"
-        )
-
-    # Convert to format expected by analyzer
+        )    # Convert to format expected by analyzer
     df_analysis = filtered_df.copy()
+    
+    # Debug info for troubleshooting
+    with st.expander("🔍 Debug Info (Expand if analytics not working)"):
+        st.write(f"**Original DataFrame shape:** {filtered_df.shape}")
+        st.write(f"**Original columns:** {list(filtered_df.columns)}")
+        st.write(f"**Data types:** {filtered_df.dtypes.to_dict()}")
+        
+        if not filtered_df.empty:
+            st.write("**Sample data:**")
+            st.dataframe(filtered_df.head(3))
+
+    # Ensure proper column format for analyzer
     df_analysis.columns = df_analysis.columns.str.title()
-    df_analysis["Date"] = df_analysis["Date"].dt.strftime("%Y-%m-%d")
+    
+    # Handle date conversion properly
+    if 'Date' in df_analysis.columns:
+        try:
+            if df_analysis['Date'].dtype == 'object':
+                df_analysis['Date'] = pd.to_datetime(df_analysis['Date'])
+            df_analysis["Date"] = df_analysis["Date"].dt.strftime("%Y-%m-%d")
+        except Exception as e:
+            st.error(f"Date conversion error: {e}")
+            st.write("Date column sample:", df_analysis['Date'].head())
+    
+    # Ensure Amount is numeric
+    if 'Amount' in df_analysis.columns:
+        df_analysis['Amount'] = pd.to_numeric(df_analysis['Amount'], errors='coerce')
 
     try:
         # Category analysis
@@ -1370,10 +1433,51 @@ def main():
 
     # Main content based on navigation
     if page == "📊 Dashboard":
-        st.markdown("## 🏠 Interactive Dashboard")
-
-        # Quick stats
+        st.markdown("## 🏠 Interactive Dashboard")        # Quick stats
         stats = db.get_database_stats()
+
+        # Add Delete Data button in the dashboard
+        if stats["total_records"] > 0:
+            st.markdown("### 🗑️ Data Management")
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.info(f"📊 Database contains {stats['total_records']} records")
+            
+            with col2:
+                if st.button("🗑️ Delete All Data", type="secondary", help="⚠️ This will permanently delete all your data!"):
+                    # Show confirmation dialog
+                    if 'confirm_delete' not in st.session_state:
+                        st.session_state.confirm_delete = False
+                    
+                    if not st.session_state.confirm_delete:
+                        st.session_state.confirm_delete = True
+                        st.warning("⚠️ **Are you sure?** This action cannot be undone!")
+                        
+                        col_yes, col_no = st.columns(2)
+                        with col_yes:
+                            if st.button("✅ Yes, Delete All", type="primary", key="confirm_yes"):
+                                try:
+                                    deleted_count = db.delete_all_data()
+                                    st.success(f"✅ Successfully deleted {deleted_count} records!")
+                                    st.session_state.confirm_delete = False
+                                    # Clear any cached data
+                                    if 'filters' in st.session_state:
+                                        st.session_state.filters = {
+                                            "date_range": None,
+                                            "categories": [],
+                                            "amount_range": None,
+                                        }
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Error deleting data: {str(e)}")
+                        
+                        with col_no:
+                            if st.button("❌ Cancel", key="confirm_no"):
+                                st.session_state.confirm_delete = False
+                                st.rerun()
+                    
+            st.markdown("---")
 
         if stats["total_records"] > 0:
             # Get filtered data for dashboard

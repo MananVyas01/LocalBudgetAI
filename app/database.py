@@ -260,6 +260,31 @@ class ExpenseDatabase:
 
             return deleted
 
+    def delete_all_data(self) -> int:
+        """
+        Delete all expense records from the database.
+
+        Returns:
+            int: Number of records deleted
+
+        Raises:
+            Exception: If deletion fails
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM expenses")
+            count_before = cursor.fetchone()[0]
+
+            cursor.execute("DELETE FROM expenses")
+
+            # Reset the auto-increment counter
+            cursor.execute("DELETE FROM sqlite_sequence WHERE name='expenses'")
+
+            conn.commit()
+
+            logger.info(f"Deleted all {count_before} expense records from database")
+            return count_before
+
     def get_expense_by_id(self, expense_id: int) -> Optional[Dict]:
         """
         Get a single expense record by ID.
