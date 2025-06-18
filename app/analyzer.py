@@ -50,3 +50,21 @@ def plot_expense_pie_chart(expense_summary: pd.Series, ax=None):
     ax.set_title('Expense Distribution by Category')
     plt.tight_layout()
     return ax
+
+def analyze_monthly_trend(df: pd.DataFrame) -> pd.Series:
+    """
+    Group data by month and sum 'Amount' (expenses only).
+    Returns a Series indexed by month (YYYY-MM) with total expenses.
+    Handles date parsing errors gracefully.
+    """
+    if 'Date' not in df.columns or 'Amount' not in df.columns:
+        raise ValueError("DataFrame must contain 'Date' and 'Amount' columns.")
+    df = df.copy()
+    df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce')
+    # Only consider negative amounts as expenses
+    df = df[df['Amount'] < 0]
+    # Parse dates, coerce errors to NaT
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    df = df.dropna(subset=['Date'])
+    df['Month'] = df['Date'].dt.to_period('M').astype(str)
+    return df.groupby('Month')['Amount'].sum().abs().sort_index()
