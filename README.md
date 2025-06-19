@@ -7,7 +7,7 @@
 <br>
 
 <p align="center">
-  <img src="DEMO/AI-Assistant.png" alt="Banner" width="80%">
+  <img src="DEMO/Main-Dashboard.png" alt="Banner" width="80%">
 </p>
 
 [![Python Version](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://python.org)
@@ -51,7 +51,7 @@
 ## 📸 Screenshots
 
 <p align="center">
-  <img src="DEMO/Main-Dashboard.png" alt="Main Dashboard" width="48%">
+  <img src="DEMO/AI-Assistant.png" alt="Main Dashboard" width="48%">
   &nbsp;
   <img src="DEMO/Analytics.png" alt="Analytics" width="48%">
 </p>
